@@ -1,5 +1,6 @@
 .env           filter=git-crypt diff=git-crypt
 .env.prod      filter=git-crypt diff=git-crypt
+.env.prod.example      filter=git-crypt diff=git-crypt
 **/*.env       filter=git-crypt diff=git-crypt
 **/*.env.*     filter=git-crypt diff=git-crypt
 **/*.pem       filter=git-crypt diff=git-crypt
