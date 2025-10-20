@@ -14,3 +14,5 @@ __pycache__/
 .cache/
 .uv-cache/
 git-crypt.key
+.env.prod.example
+.env
