@@ -22,5 +22,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+      - name: 'Create env file'
+        run: |
+          echo "MODE=staging" > .env.prod
+          echo "BACKEND_DOMAIN=feature-test.api.staging.eduweave.tech" >> .env.prod
+          echo "FRONTEND_DOMAIN=feature-test.staging.eduweave.tech" >> .env.prod
+          echo "STACK_NAME=${{ secrets.STACK_NAME_STAGING }}" >> .env.prod
+          echo "REDIS_PORT=6379" >> .env.prod
+          echo "REDIS_DB=0" >> .env.prod
+          echo "DATALAB_API_KEY=${{ secrets.DATALAB_API_KEY }}" >> .env.prod
+          echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}" >> .env.prod
+      
       - run: docker compose -f docker-compose.yaml --project-name ${{ secrets.STACK_NAME_STAGING }} build
       - run: docker compose -f docker-compose.yaml --project-name ${{ secrets.STACK_NAME_STAGING }} up -d
