@@ -12,8 +12,8 @@ jobs:
       - staging
     env:
       MODE: staging
-      BACKEND_DOMAIN: ${{ secrets.BACKEND_DOMAIN_STAGING }}
-      FRONTEND_DOMAIN: ${{ secrets.FRONTEND_DOMAIN_STAGING }}
+      BACKEND_DOMAIN: feature-test.api.staging.eduweave.tech
+      FRONTEND_DOMAIN: feature-test.staging.eduweave.tech
       STACK_NAME: ${{ secrets.STACK_NAME_STAGING }}
       REDIS_PORT: ${{ secrets.REDIS_PORT}}
       REDIS_DB: ${{ secrets.REDIS_DB}}
