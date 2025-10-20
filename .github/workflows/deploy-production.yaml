@@ -1,0 +1,27 @@
+name: Deploy to Production
+
+on:
+  release:
+    types:
+      - published
+
+
+jobs:
+  deploy:
+    runs-on:
+      - self-hosted
+      - production
+    env:
+      MODE: production
+      BACKEND_DOMAIN: ${{ secrets.BACKEND_DOMAIN_PRODUCTION }}
+      FRONTEND_DOMAIN: ${{ secrets.FRONTEND_DOMAIN_PRODUCTION }}
+      STACK_NAME: ${{ secrets.STACK_NAME_PRODUCTION }}
+      REDIS_PORT: ${{ secrets.REDIS_PORT }}
+      REDIS_DB: ${{ secrets.REDIS_DB }}
+      DATALAB_API_KEY: ${{ secrets.DATALAB_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - run: docker compose -f docker-compose.yml --project-name ${{ secrets.STACK_NAME_PRODUCTION }} build
+      - run: docker compose -f docker-compose.yml --project-name ${{ secrets.STACK_NAME_PRODUCTION }} up -d

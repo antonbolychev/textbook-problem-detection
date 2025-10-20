@@ -9,7 +9,7 @@ services:
   backend:
     build:
       context: ./backend
-    command: uv run fastapi app/main
+    command: uv run fastapi run app/main.py --host 0.0.0.0 --port 8000
     env_file:
       - .env.prod
     environment:
@@ -32,9 +32,9 @@ services:
       - traefik.docker.network=traefik-public
       - traefik.constraint-label=traefik-public
       - traefik.http.services.${STACK_NAME?Variable not set}-backend.loadbalancer.server.port=8000
-      - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.rule=Host(`api.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.rule=Host(`${BACKEND_DOMAIN?Variable not set}`)
       - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.entrypoints=http
-      - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.rule=Host(`api.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.rule=Host(`${BACKEND_DOMAIN?Variable not set}`)
       - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.entrypoints=https
       - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.tls=true
       - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.tls.certresolver=le
@@ -43,7 +43,7 @@ services:
   arq-worker:
     build:
       context: ./backend
-    command: arq backend.arq_worker.worker.WorkerSettings
+    command: uv run arq_worker/worker.py
     env_file:
       - .env.prod
     environment:
@@ -64,21 +64,26 @@ services:
   frontend:
     build:
       context: ./frontend
+      args:
+        - VITE_API_BASE_URL=https://${BACKEND_DOMAIN?Variable not set}:8000
+        - VITE_WS_BASE_URL=wss://${BACKEND_DOMAIN?Variable not set}:8000
+        - NODE_ENV=production
     env_file:
       - .env.prod
     depends_on:
       - backend
     networks:
-      - internal
       - traefik-public
+    ports:
+      - "5173:80"
     labels:
       - traefik.enable=true
       - traefik.docker.network=traefik-public
       - traefik.constraint-label=traefik-public
       - traefik.http.services.${STACK_NAME?Variable not set}-frontend.loadbalancer.server.port=80
-      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.rule=Host(`dashboard.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.rule=Host(`${FRONTEND_DOMAIN?Variable not set}`)
       - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.entrypoints=http
-      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.rule=Host(`dashboard.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.rule=Host(`${FRONTEND_DOMAIN?Variable not set}`)
       - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.entrypoints=https
       - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.tls=true
       - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-https.tls.certresolver=le

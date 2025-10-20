@@ -1,10 +1,12 @@
 FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS base
 
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends build-essential poppler-utils && \
-    rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
+
+# System packages required at runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./
 

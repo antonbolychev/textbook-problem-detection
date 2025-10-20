@@ -7,7 +7,6 @@ services:
     env_file:
       - .env
     volumes:
-      - ./backend:/app
       - ./research:/workspace/research:ro
       - ./backend/storage:/app/storage
     ports:
@@ -27,18 +26,18 @@ services:
     env_file:
       - .env
     volumes:
-      - ./backend:/app
       - ./research:/workspace/research:ro
       - ./backend/storage:/app/storage
 
   frontend:
-    env_file:
-      - .env
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_BASE_URL=http://localhost:8000
+        - VITE_WS_BASE_URL=ws://localhost:8000
+        - NODE_ENV=development
     ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - "5173:80"
     networks:
       internal: null
     labels:
@@ -49,3 +48,5 @@ services:
 
 networks:
   internal:
+  traefik-public:
+    external: false
