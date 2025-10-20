@@ -1,0 +1,17 @@
+run_artifacts*
+data
+*.json
+*.pdf
+*.txt
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.ico
+*.webp
+*.svg
+*.heic
+*.heif
+*.heif-srgb

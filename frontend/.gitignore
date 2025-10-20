@@ -1,0 +1,7 @@
+node_modules
+openapi.json
+dist
+tsconfig.tsbuildinfo
+src/**/*.js
+src/**/*.d.ts
+!src/env.d.ts

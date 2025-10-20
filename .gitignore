@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+*.pyzz
+*.pywzz
+*.pyzzz
+*.pywzzz
+*.pyzzzz
+.venv
+.env.prod
+.cache/
+.uv-cache/
+.env

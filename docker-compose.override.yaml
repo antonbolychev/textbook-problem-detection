@@ -1,0 +1,51 @@
+services:
+  redis:
+    ports:
+      - "6379:6379"
+
+  backend:
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - ./research:/workspace/research:ro
+      - ./backend/storage:/app/storage
+    ports:
+      - "8000:8000"
+    networks:
+      internal: null
+    environment:
+      MODE: local
+      
+    labels:
+      traefik.enable: "false"
+      traefik.http.routers.backend.entrypoints: null
+      traefik.http.routers.backend.rule: null
+      traefik.http.services.backend.loadbalancer.server.port: null
+
+  arq-worker:
+    env_file:
+      - .env
+    volumes:
+      - ./backend:/app
+      - ./research:/workspace/research:ro
+      - ./backend/storage:/app/storage
+
+  frontend:
+    env_file:
+      - .env
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      internal: null
+    labels:
+      traefik.enable: "false"
+      traefik.http.routers.frontend.entrypoints: null
+      traefik.http.routers.frontend.rule: null
+      traefik.http.services.frontend.loadbalancer.server.port: null
+
+networks:
+  internal:
