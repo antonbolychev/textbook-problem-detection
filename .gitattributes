@@ -1,0 +1,10 @@
+.env           filter=git-crypt diff=git-crypt
+.env.prod      filter=git-crypt diff=git-crypt
+**/*.env       filter=git-crypt diff=git-crypt
+**/*.env.*     filter=git-crypt diff=git-crypt
+**/*.pem       filter=git-crypt diff=git-crypt
+**/*.key       filter=git-crypt diff=git-crypt
+**/*.p12       filter=git-crypt diff=git-crypt
+**/*.pfx       filter=git-crypt diff=git-crypt
+backend/**/secrets/** filter=git-crypt diff=git-crypt
+
