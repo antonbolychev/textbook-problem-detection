@@ -74,8 +74,6 @@ services:
       - backend
     networks:
       - traefik-public
-    ports:
-      - "5173:80"
     labels:
       - traefik.enable=true
       - traefik.docker.network=traefik-public
