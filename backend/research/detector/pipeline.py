@@ -27,6 +27,7 @@ class PipelineResult:
     visualisations: list[Path]
     problem_visualisations: list[Path]
     raw_outputs_dir: Path | None = None
+    refine_outputs_dir: Path | None = None
 
 
 @dataclass(slots=True)
@@ -97,6 +98,24 @@ async def run_pipeline(
             concurrency = 1
         assignments = await _extract_assignments(extractor, jobs, concurrency)
 
+        # Optional refinement pass to remove outliers / add neighbors
+        if config.REFINEMENT_ENABLED:
+            try:
+                # Directory to store raw refinement results
+                refine_responses_dir = working_dir / "outputs" / "llm_refine"
+                await asyncio.to_thread(refine_responses_dir.mkdir, parents=True, exist_ok=True)
+
+                assignments = await _refine_assignments(
+                    extractor,
+                    assignments,
+                    lines_for_pages,
+                    per_page_images,
+                    image_bboxes,
+                    save_dir=refine_responses_dir,
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Refinement step failed: {e}")
+
     output_dir = working_dir / "outputs"
     await asyncio.to_thread(output_dir.mkdir, parents=True, exist_ok=True)
     json_path = output_dir / "problem_assignments.json"
@@ -163,6 +182,7 @@ async def run_pipeline(
         visualisations=visualisations,
         problem_visualisations=problem_visualisations,
         raw_outputs_dir=raw_responses_dir,
+        refine_outputs_dir=locals().get("refine_responses_dir", None),
     )
 
 
@@ -266,6 +286,313 @@ def _calculate_problem_bbox(
         "width": float(max_x - min_x),
         "height": float(max_y - min_y),
     }
+
+
+# ---------------------------------------------------------------------------
+# Refinement helpers
+
+def _get_image_size(image_path: Path) -> tuple[int, int] | None:
+    try:
+        from PIL import Image
+    except ModuleNotFoundError:  # pragma: no cover - depends on env
+        return None
+    try:
+        with Image.open(image_path) as im:
+            return im.size
+    except Exception:
+        return None
+
+
+def _scale_all_line_bboxes(
+    *,
+    lines: list[TextLine],
+    image_path: Path,
+    image_bbox: list[float] | None,
+) -> tuple[list[tuple[int, int, int, int] | None], tuple[int, int] | None]:
+    """Return a list of scaled/clipped bboxes (page pixel coords) for lines.
+
+    Returns a tuple of (scaled_boxes, image_size). Items can be ``None`` when a
+    line lacks geometry.
+    """
+    size = _get_image_size(image_path)
+    if size is None:
+        return [None for _ in lines], None
+    # Normalise page bounds like visualizer
+    if image_bbox is None or len(image_bbox) < 4:
+        bounds = (0.0, 0.0, float(size[0]), float(size[1]))
+    else:
+        x0, y0, x1, y1 = image_bbox[:4]
+        if x1 <= x0 or y1 <= y0:
+            bounds = (0.0, 0.0, float(size[0]), float(size[1]))
+        else:
+            bounds = (float(x0), float(y0), float(x1), float(y1))
+    bw = max(bounds[2] - bounds[0], 1.0)
+    bh = max(bounds[3] - bounds[1], 1.0)
+    sx, sy = size[0] / bw, size[1] / bh
+
+    result: list[tuple[int, int, int, int] | None] = []
+    for line in lines:
+        if not line.bbox or len(line.bbox) < 4:
+            result.append(None)
+            continue
+        x0, y0, x1, y1 = line.bbox[:4]
+        scaled = (
+            (x0 - bounds[0]) * sx,
+            (y0 - bounds[1]) * sy,
+            (x1 - bounds[0]) * sx,
+            (y1 - bounds[1]) * sy,
+        )
+        if scaled[2] <= scaled[0] or scaled[3] <= scaled[1]:
+            result.append(None)
+            continue
+        clipped = (
+            int(max(0, min(size[0] - 1, round(scaled[0])))),
+            int(max(0, min(size[1] - 1, round(scaled[1])))),
+            int(max(0, min(size[0] - 1, round(scaled[2])))),
+            int(max(0, min(size[1] - 1, round(scaled[3])))),
+        )
+        if clipped[2] > clipped[0] and clipped[3] > clipped[1]:
+            result.append(clipped)
+        else:
+            result.append(None)
+    return result, size
+
+
+def _quantile(values: list[float], q: float) -> float:
+    if not values:
+        return 0.0
+    v = sorted(values)
+    q = min(max(q, 0.0), 1.0)
+    i = (len(v) - 1) * q
+    lo, hi = int(i), min(int(i) + 1, len(v) - 1)
+    if hi == lo:
+        return float(v[lo])
+    frac = i - lo
+    return float(v[lo] * (1 - frac) + v[hi] * frac)
+
+
+def _estimate_content_roi(
+    boxes: list[tuple[int, int, int, int] | None], image_size: tuple[int, int]
+) -> tuple[int, int, int, int]:
+    # Use robust quantiles over x0/x1 to trim margins
+    xs0 = [b[0] for b in boxes if b]
+    xs1 = [b[2] for b in boxes if b]
+    if not xs0 or not xs1:
+        return (0, 0, image_size[0], image_size[1])
+    x0 = int(_quantile(xs0, 0.05))
+    x1 = int(_quantile(xs1, 0.95))
+    x0 = max(0, min(x0, image_size[0] - 1))
+    x1 = max(x0 + 1, min(x1, image_size[0]))
+    return (x0, 0, x1, image_size[1])
+
+
+def _iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    ix0, iy0 = max(ax0, bx0), max(ay0, by0)
+    ix1, iy1 = min(ax1, bx1), min(ay1, by1)
+    iw = max(0, ix1 - ix0)
+    ih = max(0, iy1 - iy0)
+    inter = iw * ih
+    a_area = max(0, (ax1 - ax0)) * max(0, (ay1 - ay0))
+    b_area = max(0, (bx1 - bx0)) * max(0, (by1 - by0))
+    denom = a_area + b_area - inter
+    return inter / denom if denom > 0 else 0.0
+
+
+def _build_neighbors(
+    boxes: list[tuple[int, int, int, int] | None]
+) -> dict[int, list[int]]:
+    # Simple proximity graph: link lines that vertically overlap or are close
+    indices = [i for i, b in enumerate(boxes) if b]
+    if not indices:
+        return {}
+    heights = [boxes[i][3] - boxes[i][1] for i in indices]
+    median_h = sorted(heights)[len(heights) // 2]
+    threshold = max(6, int(median_h * 1.5))
+    neighbors: dict[int, list[int]] = {i: [] for i in indices}
+    for i in indices:
+        x0, y0, x1, y1 = boxes[i]  # type: ignore[index]
+        for j in indices:
+            if j <= i:
+                continue
+            u0, v0, u1, v1 = boxes[j]  # type: ignore[index]
+            # vertical closeness or overlap
+            vert_gap = max(0, max(y0, v0) - min(y1, v1))
+            horiz_overlap = min(x1, u1) - max(x0, u0)
+            if vert_gap <= threshold and horiz_overlap > 0:
+                neighbors[i].append(j)
+                neighbors[j].append(i)
+            else:
+                # fallback: center distance heuristic
+                cx, cy = (x0 + x1) // 2, (y0 + y1) // 2
+                dx, dy = (u0 + u1) // 2 - cx, (v0 + v1) // 2 - cy
+                if abs(dx) + abs(dy) <= threshold:
+                    neighbors[i].append(j)
+                    neighbors[j].append(i)
+    return neighbors
+
+
+def _box_in_roi(box: tuple[int, int, int, int], roi: tuple[int, int, int, int]) -> bool:
+    rx0, ry0, rx1, ry1 = roi
+    bx0, by0, bx1, by1 = box
+    roi_area = max(1, (rx1 - rx0) * (ry1 - ry0))
+    ix0, iy0 = max(rx0, bx0), max(ry0, by0)
+    ix1, iy1 = min(rx1, bx1), min(ry1, by1)
+    inter = max(0, ix1 - ix0) * max(0, iy1 - iy0)
+    return inter >= 0.5 * ((bx1 - bx0) * (by1 - by0)) and inter > 0 and roi_area > 0
+
+
+def _build_refine_payload(
+    *,
+    page_number: int,
+    lines: list[TextLine],
+    assignment: PageAssignment,
+    image_path: Path,
+    image_bbox: list[float] | None,
+) -> dict[str, object] | None:
+    scaled_boxes, size = _scale_all_line_bboxes(
+        lines=lines, image_path=image_path, image_bbox=image_bbox
+    )
+    if size is None:
+        return None
+    roi = _estimate_content_roi(
+        scaled_boxes, size
+    )
+    neighbors = _build_neighbors(scaled_boxes)
+
+    def _clean_text(text: str) -> str:
+        # strip very simple markup and truncate
+        out: list[str] = []
+        inside = False
+        for ch in text:
+            if ch == "<":
+                inside = True
+                continue
+            if ch == ">" and inside:
+                inside = False
+                continue
+            if not inside:
+                out.append(ch)
+        s = "".join(out).replace("\n", " ").strip()
+        if len(s) > config.REFINEMENT_JSON_TRUNCATE_TEXT:
+            s = s[: config.REFINEMENT_JSON_TRUNCATE_TEXT] + "…"
+        return s
+
+    payload_lines: list[dict[str, object]] = []
+    for idx, (line, box) in enumerate(zip(lines, scaled_boxes)):
+        entry: dict[str, object] = {"i": idx}
+        if box:
+            x0, y0, x1, y1 = box
+            entry["bbox"] = {"x": x0, "y": y0, "w": x1 - x0, "h": y1 - y0}
+            entry["in_roi"] = _box_in_roi(box, roi)
+            entry["neighbors"] = neighbors.get(idx, [])
+        else:
+            entry["bbox"] = None
+            entry["in_roi"] = False
+            entry["neighbors"] = []
+        entry["text"] = _clean_text(line.text or "")
+        payload_lines.append(entry)
+
+    payload_groups: list[dict[str, object]] = []
+    for problem in assignment.problems:
+        payload_groups.append(
+            {"problem_id": problem.problem_id, "indices": list(problem.line_indices)}
+        )
+
+    return {
+        "page": page_number,
+        "image_size": [size[0], size[1]],
+        "content_roi": {"x0": roi[0], "y0": roi[1], "x1": roi[2], "y1": roi[3]},
+        "lines": payload_lines,
+        "groups": payload_groups,
+    }
+
+
+async def _refine_assignments(
+    extractor: LLMProblemExtractor,
+    assignments: list[PageAssignment],
+    page_lines: list[list[TextLine]],
+    image_paths: list[Path],
+    image_bboxes: list[list[float]],
+    save_dir: Path | None = None,
+) -> list[PageAssignment]:
+    if not assignments:
+        return assignments
+
+    for idx, assignment in enumerate(assignments):
+        try:
+            payload = _build_refine_payload(
+                page_number=assignment.page_number,
+                lines=page_lines[idx],
+                assignment=assignment,
+                image_path=image_paths[idx],
+                image_bbox=image_bboxes[idx] if idx < len(image_bboxes) else None,
+            )
+            if payload is None:
+                continue
+            response = await extractor.refine_groups(
+                page_number=assignment.page_number, payload=payload
+            )
+            if save_dir is not None:
+                # Persist raw refine response for inspection
+                try:
+                    out_path = save_dir / f"page_{assignment.page_number:03}.json"
+                    await asyncio.to_thread(_write_json, out_path, response)
+                except Exception as ex:  # noqa: BLE001
+                    logger.debug(
+                        f"Failed to write refine response for page {assignment.page_number}: {ex}"
+                    )
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"Skipping refinement for page {assignment.page_number}: {e}")
+            continue
+
+        try:
+            corrections = response.get("corrections", [])  # type: ignore[assignment]
+            if not isinstance(corrections, list):
+                continue
+        except Exception:
+            continue
+
+        # Apply corrections
+        by_id = {p.problem_id: p for p in assignment.problems}
+        for item in corrections:
+            try:
+                pid = str(item.get("problem_id"))
+                remove = {int(i) for i in (item.get("remove") or [])}
+                add = {int(i) for i in (item.get("add") or [])}
+                reason = str(item.get("reason") or "")
+            except Exception:
+                continue
+            if pid not in by_id:
+                continue
+            problem = by_id[pid]
+            current = set(problem.line_indices)
+            # Keep indices within bounds
+            max_index = len(page_lines[idx]) - 1
+            filtered_add = {i for i in add if 0 <= i <= max_index}
+            filtered_remove = {i for i in remove if 0 <= i <= max_index}
+            updated = sorted((current - filtered_remove) | filtered_add)
+            if updated != problem.line_indices:
+                logger.info(
+                    "Refine page %s problem %s: -%s +%s%s",
+                    assignment.page_number,
+                    pid,
+                    sorted(filtered_remove) if filtered_remove else [],
+                    sorted(filtered_add) if filtered_add else [],
+                    f" | {reason}" if reason else "",
+                )
+                problem.line_indices = updated  # mutate in-place
+            else:
+                if reason:
+                    logger.debug(
+                        "Refine page %s problem %s: no change (%s)",
+                        assignment.page_number,
+                        pid,
+                        reason,
+                    )
+
+    return assignments
 
 
 def _build_page_reports(

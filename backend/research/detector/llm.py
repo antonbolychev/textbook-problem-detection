@@ -139,6 +139,106 @@ class LLMProblemExtractor:
             page_number, parsed, prepared_lines, response_text
         )
 
+    # ------------------------------ refinement: outlier removal / contiguity
+    async def refine_groups(
+        self,
+        *,
+        page_number: int,
+        payload: dict[str, object],
+    ) -> dict[str, object]:
+        """
+        Ask the model to refine initial problem groupings by removing outlier
+        lines and adding obvious neighbors so that each problem forms a single
+        contiguous block within the main text column.
+
+        Returns a dict with shape:
+        {
+          "page": <int>,
+          "corrections": [
+            {"problem_id": str, "remove": [int], "add": [int]}
+          ]
+        }
+
+        The method is best-effort: any API error raises RuntimeError to the
+        caller so the pipeline can decide how to proceed.
+        """
+        client = await self._ensure_client()
+        url = "/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        instructions = (
+            "You are cleaning groups of OCR lines for a textbook page. "
+            "For each problem, ensure selected line indices form a single, "
+            "contiguous block inside the main text column (content_roi). "
+            "Ignore information from page margins if present; treat margin notes, "
+            "headers/footers, and page numbers as out-of-scope for grouping. "
+            "Problems are often aligned in a consistent manner (e.g., vertically, "
+            "horizontally, multi-column, etc.); "
+            "prefer such alignment cues when resolving ambiguities. "
+            "Rules: keep only lines primarily inside content_roi; use the "
+            "neighbors graph to maintain contiguity. When you see small gaps or "
+            "missing in-between lines that are neighbors and inside content_roi, "
+            "prefer ADDING those lines to restore a single contiguous block. "
+            "Likewise, it is acceptable to ADD short header-like or concluding lines "
+            "that clearly belong to the problem and lie inside content_roi. "
+            "If multiple components exist, first attempt to reconnect them by adding "
+            "bridge neighbor lines; if impossible, keep the component that contains a "
+            "header-like line or, if none, the largest component. You may only add "
+            "indices that appear in the provided lines list and are neighbors of "
+            "existing indices; do not invent ids or indices. It is acceptable to make "
+            "no changes when groups are already contiguous — return an empty "
+            "corrections list in that case or include per-problem entries with "
+            "empty add/remove. For every correction, include a short human-"
+            "readable 'reason' explaining why lines were added or removed. "
+            "Respond with strict JSON only using this shape: "
+            '{"page": int, "corrections": [ { "problem_id": str, '
+            '"remove": [int], "add": [int], "reason": str } ] }.'
+        )
+
+        prompt_text = json.dumps(payload, ensure_ascii=False)
+        request_payload = {
+            "model": self.model,
+            "temperature": config.OPENAI_TEMPERATURE,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": instructions},
+                {"role": "user", "content": prompt_text},
+            ],
+        }
+
+        logger.debug(
+            f"Sending refine request for page {page_number} (payload size {len(prompt_text)} chars)",
+        )
+        try:
+            response = await client.post(url, json=request_payload, headers=headers)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:  # pragma: no cover - network
+            body = getattr(exc.response, "text", "") if hasattr(exc, "response") else ""
+            raise RuntimeError(f"OpenAI refine request failed: {exc!r} {body}") from exc
+
+        data = response.json()
+        try:
+            content = data["choices"][0]["message"]["content"]
+            text = str(content) if content is not None else "{}"
+        except (KeyError, IndexError) as exc:
+            raise RuntimeError(f"Malformed refine response: {data}") from exc
+
+        try:
+            parsed = json.loads(text)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            # Be tolerant to minor wrapping errors by extracting the first JSON object
+            brace_start = text.find("{")
+            brace_end = text.rfind("}")
+            if brace_start == -1 or brace_end == -1:
+                raise
+            snippet = text[brace_start : brace_end + 1]
+            parsed = json.loads(snippet)
+            return parsed if isinstance(parsed, dict) else {}
+
     # ----------------------------------------------------------------- helpers
     async def _ensure_client(self) -> httpx.AsyncClient:
         if self._client is None:
@@ -159,7 +259,7 @@ class LLMProblemExtractor:
         }
         payload = {
             "model": self.model,
-            "temperature": 0,
+            "temperature": config.OPENAI_TEMPERATURE,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": self.system_prompt},
