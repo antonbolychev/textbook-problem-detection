@@ -27,6 +27,7 @@ class PipelineResult:
     visualisations: list[Path]
     problem_visualisations: list[Path]
     raw_outputs_dir: Path | None = None
+    refine_outputs_dir: Path | None = None
 
 
 @dataclass(slots=True)
@@ -100,12 +101,17 @@ async def run_pipeline(
         # Optional refinement pass to remove outliers / add neighbors
         if config.REFINEMENT_ENABLED:
             try:
+                # Directory to store raw refinement results
+                refine_responses_dir = working_dir / "outputs" / "llm_refine"
+                await asyncio.to_thread(refine_responses_dir.mkdir, parents=True, exist_ok=True)
+
                 assignments = await _refine_assignments(
                     extractor,
                     assignments,
                     lines_for_pages,
                     per_page_images,
                     image_bboxes,
+                    save_dir=refine_responses_dir,
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"Refinement step failed: {e}")
@@ -176,6 +182,7 @@ async def run_pipeline(
         visualisations=visualisations,
         problem_visualisations=problem_visualisations,
         raw_outputs_dir=raw_responses_dir,
+        refine_outputs_dir=locals().get("refine_responses_dir", None),
     )
 
 
@@ -508,6 +515,7 @@ async def _refine_assignments(
     page_lines: list[list[TextLine]],
     image_paths: list[Path],
     image_bboxes: list[list[float]],
+    save_dir: Path | None = None,
 ) -> list[PageAssignment]:
     if not assignments:
         return assignments
@@ -526,6 +534,15 @@ async def _refine_assignments(
             response = await extractor.refine_groups(
                 page_number=assignment.page_number, payload=payload
             )
+            if save_dir is not None:
+                # Persist raw refine response for inspection
+                try:
+                    out_path = save_dir / f"page_{assignment.page_number:03}.json"
+                    await asyncio.to_thread(_write_json, out_path, response)
+                except Exception as ex:  # noqa: BLE001
+                    logger.debug(
+                        f"Failed to write refine response for page {assignment.page_number}: {ex}"
+                    )
         except Exception as e:  # noqa: BLE001
             logger.debug(f"Skipping refinement for page {assignment.page_number}: {e}")
             continue

@@ -90,6 +90,11 @@ async def _run(args: CLIArgs) -> None:
                 str(result.raw_outputs_dir), artifact_path="outputs/llm_raw"
             )
 
+        if getattr(result, "refine_outputs_dir", None) and result.refine_outputs_dir.exists():
+            mlflow.log_artifacts(
+                str(result.refine_outputs_dir), artifact_path="outputs/llm_refine"
+            )
+
         if result.visualisations:
             vis_dir = result.visualisations[0].parent
             mlflow.log_artifacts(str(vis_dir), artifact_path="outputs/visualisations")
@@ -112,6 +117,8 @@ async def _run(args: CLIArgs) -> None:
         logger.info(f"Saved page assignments to {result.output_json}")
         if result.raw_outputs_dir:
             logger.info(f"Stored raw LLM responses in {result.raw_outputs_dir}")
+        if getattr(result, "refine_outputs_dir", None):
+            logger.info(f"Stored refine LLM responses in {result.refine_outputs_dir}")
         if result.visualisations:
             logger.info(
                 f"Generated {len(result.visualisations)} annotated images in {result.visualisations[0].parent}"
