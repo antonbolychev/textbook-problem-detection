@@ -29,12 +29,16 @@ def setup_mlflow(tracking_uri: str | None, experiment_name: str) -> None:
 
 
 def auto_commit_research(branch_name: str = "experiments", context_message: str = "") -> None:
-    """Commit backend/research changes on a fresh `branch_name-<id>` branch before running.
+    """Auto-commit research changes with minimal branch churn.
 
-    - Detects pending changes under backend/research (tracked and untracked).
-    - Creates and checks out a new branch named `<branch_name>-<YYYYMMDD-HHMMSS>` from current HEAD.
-    - Stages and commits only backend/research on that new branch.
-    - Stays on the new branch (no stash, no switching back).
+    Behaviour:
+    - If there are no changes under ``backend/research``: do nothing.
+    - If the current branch is ``branch_name`` (default: ``experiments``):
+      commit the changes directly on this branch (no new branch).
+    - Otherwise, create and switch to a new branch derived from the current
+      HEAD named ``<branch_name>-<shortsha>``; if it already exists, append a
+      timestamp to keep it unique.
+    - Only stage and commit the ``backend/research`` path.
     """
 
     repo = Repo(search_parent_directories=True)
@@ -50,16 +54,22 @@ def auto_commit_research(branch_name: str = "experiments", context_message: str 
     if not status_lines:
         return
 
-    # Create and switch to a unique experiments branch at current HEAD using short SHA
-    shortsha = repo.git.rev_parse("--short", "HEAD").strip()
-    base_branch = f"{branch_name}-{shortsha}"
-    new_branch = base_branch
-    # Ensure uniqueness if the base name already exists
-    existing = {h.name for h in repo.heads}
-    if new_branch in existing:
-        ts_id = datetime.now().strftime("%Y%m%d-%H%M%S")
-        new_branch = f"{base_branch}-{ts_id}"
-    repo.git.checkout("-b", new_branch)
+    # If already on the target branch, commit in place. Otherwise, create a
+    # short-lived experiments branch named with the current short SHA.
+    try:
+        active_branch = repo.active_branch.name  # type: ignore[attr-defined]
+    except Exception:
+        active_branch = ""
+
+    if active_branch != branch_name:
+        shortsha = repo.git.rev_parse("--short", "HEAD").strip()
+        base_branch = f"{branch_name}-{shortsha}"
+        new_branch = base_branch
+        existing = {h.name for h in repo.heads}
+        if new_branch in existing:
+            ts_id = datetime.now().strftime("%Y%m%d-%H%M%S")
+            new_branch = f"{base_branch}-{ts_id}"
+        repo.git.checkout("-b", new_branch)
 
     # Stage and commit only research path
     repo.git.add("-A", str(research_rel))
