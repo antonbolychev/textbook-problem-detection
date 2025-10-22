@@ -13,7 +13,7 @@ from app.settings import BACKEND_ROOT, settings
 
 OPENAI_API_KEY = settings.openai_api_key
 OPENAI_API_BASE = "https://api.openai.com/v1"
-OPENAI_VISION_MODEL = "gpt-4o-mini"
+OPENAI_VISION_MODEL = "gpt-4.1"
 OPENAI_TIMEOUT_SECONDS = 60
 MAX_CONCURRENT_LLM_REQUESTS = settings.llm_max_concurrency
 
