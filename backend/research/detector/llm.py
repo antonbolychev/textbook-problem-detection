@@ -191,7 +191,7 @@ class LLMProblemExtractor:
         prompt_text = json.dumps(payload, ensure_ascii=False)
         request_payload = {
             "model": self.model,
-            "temperature": 0,
+            "temperature": config.OPENAI_TEMPERATURE,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": instructions},
@@ -249,7 +249,7 @@ class LLMProblemExtractor:
         }
         payload = {
             "model": self.model,
-            "temperature": 0,
+            "temperature": config.OPENAI_TEMPERATURE,
             "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": self.system_prompt},

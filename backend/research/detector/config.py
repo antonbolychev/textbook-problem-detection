@@ -16,6 +16,7 @@ OPENAI_API_BASE = "https://api.openai.com/v1"
 OPENAI_VISION_MODEL = "gpt-4.1"
 OPENAI_TIMEOUT_SECONDS = 60
 MAX_CONCURRENT_LLM_REQUESTS = settings.llm_max_concurrency
+OPENAI_TEMPERATURE = 0.0  # keep deterministic behaviour
 
 # PDF/image processing ------------------------------------------------------
 WORK_DIR = BACKEND_ROOT / "research" / "work"
