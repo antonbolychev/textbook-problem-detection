@@ -59,6 +59,7 @@ research = [
     "aim-mlflow>=0.2.1",
     "mlflow>=2.12,<3.0",
     "tyro>=0.9.35",
+    "gitpython>=3.1.43",
 ]
 
 [tool.mypy]

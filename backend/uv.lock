@@ -273,6 +273,7 @@ dev = [
 ]
 research = [
     { name = "aim-mlflow" },
+    { name = "gitpython" },
     { name = "mlflow" },
     { name = "tyro" },
 ]
@@ -317,6 +318,7 @@ dev = [
 ]
 research = [
     { name = "aim-mlflow", specifier = ">=0.2.1" },
+    { name = "gitpython", specifier = ">=3.1.43" },
     { name = "mlflow", specifier = ">=2.12,<3.0" },
     { name = "tyro", specifier = ">=0.9.35" },
 ]
