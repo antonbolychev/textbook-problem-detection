@@ -177,10 +177,15 @@ class LLMProblemExtractor:
             "neighbors graph to maintain contiguity; if multiple components "
             "exist, keep the component that contains a header-like line or, "
             "if none, the largest component; you may only add indices that "
-            "appear in the lines list and are neighbors of existing indices; "
-            "do not invent ids or indices. Respond with strict JSON only: "
-            "{\"page\": int, \"corrections\":[{" \
-            "problem_id\": str, \"remove\":[int], \"add\":[int]}...]}."
+            "appear in the provided lines list and are neighbors of existing "
+            "indices; do not invent ids or indices. It is acceptable to make "
+            "no changes when groups are already contiguous — return an empty "
+            "corrections list in that case or include per-problem entries with "
+            "empty add/remove. For every correction, include a short human-"
+            "readable 'reason' explaining why lines were added or removed. "
+            "Respond with strict JSON only using this shape: "
+            "{\"page\": int, \"corrections\": [ { \"problem_id\": str, "
+            "\"remove\": [int], \"add\": [int], \"reason\": str } ] }."
         )
 
         prompt_text = json.dumps(payload, ensure_ascii=False)

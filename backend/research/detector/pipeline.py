@@ -544,6 +544,7 @@ async def _refine_assignments(
                 pid = str(item.get("problem_id"))
                 remove = {int(i) for i in (item.get("remove") or [])}
                 add = {int(i) for i in (item.get("add") or [])}
+                reason = str(item.get("reason") or "")
             except Exception:
                 continue
             if pid not in by_id:
@@ -555,7 +556,24 @@ async def _refine_assignments(
             filtered_add = {i for i in add if 0 <= i <= max_index}
             filtered_remove = {i for i in remove if 0 <= i <= max_index}
             updated = sorted((current - filtered_remove) | filtered_add)
-            problem.line_indices = updated  # mutate in-place
+            if updated != problem.line_indices:
+                logger.info(
+                    "Refine page %s problem %s: -%s +%s%s",
+                    assignment.page_number,
+                    pid,
+                    sorted(filtered_remove) if filtered_remove else [],
+                    sorted(filtered_add) if filtered_add else [],
+                    f" | {reason}" if reason else "",
+                )
+                problem.line_indices = updated  # mutate in-place
+            else:
+                if reason:
+                    logger.debug(
+                        "Refine page %s problem %s: no change (%s)",
+                        assignment.page_number,
+                        pid,
+                        reason,
+                    )
 
     return assignments
 
