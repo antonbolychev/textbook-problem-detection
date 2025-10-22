@@ -59,7 +59,6 @@ async def _run(args: CLIArgs) -> None:
     # Determine PDF name for commit context and commit early on experiments branch
     pdf_name = Path(str(params["pdf"])).name
     auto_commit_research(
-        branch_name="experiments",
         context_message=f"pre-run pdf={pdf_name}",
     )
 
@@ -90,7 +89,10 @@ async def _run(args: CLIArgs) -> None:
                 str(result.raw_outputs_dir), artifact_path="outputs/llm_raw"
             )
 
-        if getattr(result, "refine_outputs_dir", None) and result.refine_outputs_dir.exists():
+        if (
+            getattr(result, "refine_outputs_dir", None)
+            and result.refine_outputs_dir.exists()
+        ):
             mlflow.log_artifacts(
                 str(result.refine_outputs_dir), artifact_path="outputs/llm_refine"
             )

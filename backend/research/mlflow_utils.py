@@ -28,7 +28,9 @@ def setup_mlflow(tracking_uri: str | None, experiment_name: str) -> None:
     mlflow.set_experiment(experiment_name)
 
 
-def auto_commit_research(branch_name: str = "experiments", context_message: str = "") -> None:
+def auto_commit_research(
+    branch_name_prefix: str = "experiments", context_message: str = ""
+) -> None:
     """Auto-commit research changes with minimal branch churn.
 
     Behaviour:
@@ -61,7 +63,7 @@ def auto_commit_research(branch_name: str = "experiments", context_message: str 
     except Exception:
         active_branch = ""
 
-    if active_branch != branch_name:
+    if not active_branch.startswith(branch_name_prefix):
         shortsha = repo.git.rev_parse("--short", "HEAD").strip()
         base_branch = f"{branch_name}-{shortsha}"
         new_branch = base_branch
@@ -73,7 +75,9 @@ def auto_commit_research(branch_name: str = "experiments", context_message: str 
 
     # Stage and commit only research path
     repo.git.add("-A", str(research_rel))
-    staged = repo.git.diff("--cached", "--name-only", "--", str(research_rel)).splitlines()
+    staged = repo.git.diff(
+        "--cached", "--name-only", "--", str(research_rel)
+    ).splitlines()
     if staged:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         msg = f"research: auto-commit {timestamp} {context_message}".strip()
