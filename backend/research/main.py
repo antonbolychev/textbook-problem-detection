@@ -66,7 +66,6 @@ async def _run(args: CLIArgs) -> None:
     # Configure MLflow tracking and experiment
     setup_mlflow(args.tracking_uri, args.experiment_name)
 
-
     # Start MLflow run
     run_name = f"problem-detection:{pdf_name}"
     with mlflow.start_run(run_name=run_name):
@@ -93,9 +92,7 @@ async def _run(args: CLIArgs) -> None:
 
         if result.visualisations:
             vis_dir = result.visualisations[0].parent
-            mlflow.log_artifacts(
-                str(vis_dir), artifact_path="outputs/visualisations"
-            )
+            mlflow.log_artifacts(str(vis_dir), artifact_path="outputs/visualisations")
 
         if result.problem_visualisations:
             pvis_dir = result.problem_visualisations[0].parent
