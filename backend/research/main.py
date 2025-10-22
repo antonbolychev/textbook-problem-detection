@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import sys
 import subprocess
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Literal
 from pathlib import Path
+from datetime import datetime
 
 import mlflow
 import tyro
@@ -58,11 +59,107 @@ def _is_uri(value: str) -> bool:
     return "://" in value
 
 
+def _auto_commit_research(branch_name: str = "experiments", context_message: str = "") -> None:
+    """Stage backend/research and commit on the given branch if there are changes.
+
+    - Stages only the research folder.
+    - Switches to the target branch (creates if missing), commits only that path.
+    - Switches back to the original branch.
+    - No-op if there is nothing to commit under research.
+    """
+
+    def _run_git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+
+    # Discover repo root
+    repo_root_proc = _run_git(["rev-parse", "--show-toplevel"], current_dir)
+    if repo_root_proc.returncode != 0:
+        logger.debug("Not in a git repo; skipping auto-commit.")
+        return
+    repo_root = Path(repo_root_proc.stdout.strip())
+
+    research_path_rel = Path("backend") / "research"
+    research_abs = repo_root / research_path_rel
+    if not research_abs.exists():
+        logger.debug(f"Research path not found at {research_abs}; skipping auto-commit.")
+        return
+
+    # Stage research folder only
+    _run_git(["add", "-A", str(research_path_rel)], repo_root)
+
+    # Check if there is anything staged for research
+    diff_cached = _run_git(["diff", "--cached", "--name-only", "--", str(research_path_rel)], repo_root)
+    staged_files = [ln for ln in diff_cached.stdout.splitlines() if ln.strip()]
+    if not staged_files:
+        logger.info("No changes in research to commit.")
+        return
+
+    # Remember current branch to switch back later
+    cur_branch_proc = _run_git(["rev-parse", "--abbrev-ref", "HEAD"], repo_root)
+    current_branch = cur_branch_proc.stdout.strip() if cur_branch_proc.returncode == 0 else "HEAD"
+
+    # Ensure target branch exists and switch to it
+    branch_exists = _run_git(["rev-parse", "--verify", branch_name], repo_root).returncode == 0
+    if branch_exists:
+        switch_proc = _run_git(["switch", branch_name], repo_root)
+        if switch_proc.returncode != 0:
+            # Fallback to checkout for older git
+            switch_proc = _run_git(["checkout", branch_name], repo_root)
+    else:
+        switch_proc = _run_git(["switch", "-c", branch_name], repo_root)
+        if switch_proc.returncode != 0:
+            switch_proc = _run_git(["checkout", "-b", branch_name], repo_root)
+
+    if switch_proc.returncode != 0:
+        logger.warning(
+            f"Could not switch to '{branch_name}' branch; committing on current branch '{current_branch}'.\n"
+            f"git switch/checkout stderr: {switch_proc.stderr.strip()}"
+        )
+
+    # Compose commit message
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    msg = f"research: auto-commit {timestamp} {context_message}".strip()
+
+    # Commit ONLY the research path, leaving other staged changes untouched
+    commit_proc = _run_git(["commit", "-m", msg, "--", str(research_path_rel)], repo_root)
+    if commit_proc.returncode != 0:
+        # If nothing to commit (race) or other issue, log and exit
+        stderr = commit_proc.stderr.strip()
+        if "nothing to commit" in stderr.lower():
+            logger.info("No changes to commit after staging.")
+        else:
+            logger.warning(f"Git commit failed: {stderr}")
+
+    # Switch back to previous branch if we managed to switch earlier and there is a named branch to return to
+    if switch_proc.returncode == 0 and current_branch not in {"HEAD", branch_name, "(HEAD)"}:
+        back_proc = _run_git(["switch", current_branch], repo_root)
+        if back_proc.returncode != 0:
+            back_proc = _run_git(["checkout", current_branch], repo_root)
+        if back_proc.returncode != 0:
+            logger.warning(f"Failed to switch back to '{current_branch}': {back_proc.stderr.strip()}")
+
 async def _run(args: CLIArgs) -> None:
     """Execute pipeline and log artifacts to MLflow (filesystem-backed in research/mlruns by default)."""
     # Log all CLI params up-front
     params = _normalise_params_for_logging(args)
     logger.info({"event": "cli_params", **params})
+
+    # Determine PDF name for commit context and commit early on experiments branch
+    pdf_name = Path(str(params["pdf"])).name
+    try:
+        _auto_commit_research(
+            branch_name="experiments",
+            context_message=f"pre-run pdf={pdf_name}",
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Pre-run auto-commit skipped: {e}")
 
     # Configure tracking URI (local path by default under research/mlruns)
     if args.tracking_uri:
@@ -86,7 +183,6 @@ async def _run(args: CLIArgs) -> None:
         logger.error(f"Failed to set MLflow experiment '{args.experiment_name}': {e}")
 
     # Start MLflow run
-    pdf_name = Path(str(params["pdf"])).name
     run_name = f"problem-detection:{pdf_name}"
     with mlflow.start_run(run_name=run_name):
         mlflow.log_params(params)
